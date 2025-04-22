@@ -2,15 +2,14 @@
 
 #include <Arduino.h>
 #if defined(ESP32)
-#pragma message "Building KnxLed for ESP32"
 #include "driver/ledc.h"
 extern byte nextEsp32LedChannel; // next available LED channel for ESP32
 #elif defined(ESP8266)
-#pragma message "Building KnxLed for ESP8266"
+// No special includes needed for ESP8266
 #elif defined(LIBRETINY)
-#pragma message "Building KnxLed for libretiny"
+// No special includes needed for LIBRETINY
 #else
-#error "Wrong hardware. Not ESP8266 or ESP32"
+#error "Wrong hardware. Not ESP8266 or ESP32 or LIBRETINY"
 #endif
 
 #define MIN_BRIGHTNESS 12
