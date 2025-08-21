@@ -119,7 +119,7 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 			savedBrightness = setpointBrightness;
 		}
 		returnBrightness();
-		relDimmCmd.dimMode = IDLE;
+		relDimCmd.dimMode = IDLE;
 		relTemperatureCmd.dimMode = IDLE;
 		setpointHsv.v = brightness;
 	}
@@ -129,7 +129,7 @@ void KnxLed::setTemperature(uint16_t temperature)
 {
 	setpointTemperature = constrain(temperature, 2700, 6500);
 	returnTemperature();
-	relDimmCmd.dimMode = IDLE;
+	relDimCmd.dimMode = IDLE;
 	relTemperatureCmd.dimMode = IDLE;
 	if (currentLightMode != MODE_CCT)
 	{
@@ -180,7 +180,7 @@ void KnxLed::setHsv(hsv_t hsv)
 	}
 
 	returnColors();
-	relDimmCmd.dimMode = IDLE;
+	relDimCmd.dimMode = IDLE;
 	relTemperatureCmd.dimMode = IDLE;
 	currentLightMode = MODE_RGB;
 	setBrightness(hsv.v);
@@ -216,14 +216,21 @@ void KnxLed::configDefaultHsv(hsv_t hsv)
 	defaultHsv = hsv;
 }
 
-void KnxLed::configDimmSpeed(uint8_t dimmSetSpeed)
+void KnxLed::configDimSpeed(uint8_t relDimTime)
 {
-	dimmSpeed = dimmSetSpeed;
+	relDimInterval = relDimTime;
 }
 
-void KnxLed::setRelDimmCmd(dpt3_t dimmCmd)
+void KnxLed::configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t fadeColorTime)
 {
-	relDimmCmd = dimmCmd;
+	fadeUpInterval = fadeUpTime;
+	fadeDownInterval = fadeDownTime;
+	fadeColorInterval = fadeColorTime;
+}
+
+void KnxLed::setRelDimCmd(dpt3_t dimCmd)
+{
+	relDimCmd = dimCmd;
 }
 
 void KnxLed::setRelTemperatureCmd(dpt3_t temperatureCmd)
@@ -274,18 +281,18 @@ void KnxLed::loop()
 {
 	if (initialized)
 	{
+		relativeDimming();
 		fade();
 	}
 }
 
-void KnxLed::fade()
+void KnxLed::relativeDimming()
 {
-	dimmCount++;
-	int oldBrightness = actBrightness;
-	if (dimmCount >= dimmSpeed)
+	relDimCount++;
+	if (relDimCount >= relDimInterval)
 	{
-		dimmCount = 0;
-		if (relDimmCmd.dimMode == UP && actBrightness < MAX_BRIGHTNESS)
+		relDimCount = 0;
+		if (relDimCmd.dimMode == UP && actBrightness < MAX_BRIGHTNESS)
 		{
 			setpointBrightness = actBrightness + 1;
 			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
@@ -293,7 +300,7 @@ void KnxLed::fade()
 				returnBrightness();
 			}
 		}
-		else if (relDimmCmd.dimMode == DOWN && actBrightness > MIN_BRIGHTNESS)
+		else if (relDimCmd.dimMode == DOWN && actBrightness > MIN_BRIGHTNESS)
 		{
 			setpointBrightness = actBrightness - 1;
 			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
@@ -301,11 +308,11 @@ void KnxLed::fade()
 				returnBrightness();
 			}
 		}
-		else if (relDimmCmd.dimMode == STOP)
+		else if (relDimCmd.dimMode == STOP)
 		{
 			savedBrightness = setpointBrightness; // = actBrightness;
 			returnBrightness();
-			relDimmCmd.dimMode = IDLE;
+			relDimCmd.dimMode = IDLE;
 		}
 
 		if (relTemperatureCmd.dimMode == UP && actTemperature < 6500)
@@ -376,56 +383,47 @@ void KnxLed::fade()
 			relSaturationCmd.dimMode = IDLE;
 		}
 	}
+}
 
-	bool updatePwm = false;
+void KnxLed::fade()
+{	
+	// Fade immediately if any relative command is active
+	bool relCmdActive = relDimCmd.dimMode != IDLE || relTemperatureCmd.dimMode != IDLE || relHueCmd.dimMode != IDLE || relSaturationCmd.dimMode != IDLE;
+
+	// Increment counters and check if fade should occur
+	bool relFadeUp = (++fadeUpCount >= fadeUpInterval) || relCmdActive;
+	bool relFadeDown = (++fadeDownCount >= fadeDownInterval) || relCmdActive;
+	bool relFadeColor = (++fadeColorCount >= fadeColorInterval) || relCmdActive;
+	if (relFadeUp) fadeUpCount = 0;
+	if (relFadeDown) fadeDownCount = 0;
+	if (relFadeColor) fadeColorCount = 0;
+
+	bool updatePwm = false;		
 	if (setpointBrightness != actBrightness)
 	{
-		actBrightness += setpointBrightness > actBrightness ? 1 : -1;
-		updatePwm = true;
-	}
-
-	if (setpointTemperature > actTemperature)
-	{
-		actTemperature = min<uint16_t>(actTemperature + 20, setpointTemperature);
-		updatePwm = true;
-	}
-	else if (setpointTemperature < actTemperature)
-	{
-		actTemperature = max<uint16_t>(actTemperature - 20, setpointTemperature);
-		updatePwm = true;
-	}
-
-	uint8_t diffH = abs(setpointHsv.h - actHsv.h);
-	if (diffH > 0)
-	{
-		bool do360overflow = diffH > 128;
-		if ((setpointHsv.h > actHsv.h) != do360overflow)
+		int oldBrightness = actBrightness;
+		if (setpointBrightness > actBrightness && relFadeUp)
 		{
-			actHsv.h = (actHsv.h + 1) % 256;
+			actBrightness++;
+			updatePwm = true;
 		}
-		else
+		else if (setpointBrightness < actBrightness && relFadeDown)
 		{
-			actHsv.h = (actHsv.h + 255) % 256;
+			actBrightness--;
+			updatePwm = true;
 		}
-		updatePwm = true;
-	}
 
-	if (diffH > 43 && (setpointHsv.s - actHsv.s) < diffH && actHsv.s > 1)
-	{
-		actHsv.s -= 2;
-		updatePwm = true;
-	}
-	else if (setpointHsv.s != actHsv.s)
-	{
-		actHsv.s += setpointHsv.s > actHsv.s ? 1 : -1;
-		updatePwm = true;
+		if ((actBrightness == 0) != (oldBrightness == 0))
+		{
+			returnStatus();
+		}
 	}
 
 	if (currentLightMode == MODE_CCT && (lightType == RGBCT || lightType == RGBW))
 	{
-		if (actHsv.v > 0)
+		if (actHsv.v > 0 && relFadeDown)
 		{
-			actHsv.v -= 1;
+			actHsv.v--;
 			updatePwm = true;
 		}
 	}
@@ -433,7 +431,55 @@ void KnxLed::fade()
 	{
 		if (setpointBrightness != actHsv.v)
 		{
-			actHsv.v += setpointBrightness > actHsv.v ? 1 : -1;
+			if (setpointBrightness > actHsv.v && relFadeUp)
+			{
+				actHsv.v++;
+				updatePwm = true;
+			}
+			else if (setpointBrightness < actHsv.v && relFadeDown)
+			{
+				actHsv.v--;
+				updatePwm = true;
+			}
+		}
+	}
+
+	if(relFadeColor)
+	{
+		if (setpointTemperature > actTemperature)
+		{
+			actTemperature = min<uint16_t>(actTemperature + 20, setpointTemperature);
+			updatePwm = true;
+		}
+		else if (setpointTemperature < actTemperature)
+		{
+			actTemperature = max<uint16_t>(actTemperature - 20, setpointTemperature);
+			updatePwm = true;
+		}
+
+		uint8_t diffH = abs(setpointHsv.h - actHsv.h);
+		if (diffH > 0)
+		{
+			bool do360overflow = diffH > 128;
+			if ((setpointHsv.h > actHsv.h) != do360overflow)
+			{
+				actHsv.h = (actHsv.h + 1) % 256;
+			}
+			else
+			{
+				actHsv.h = (actHsv.h + 255) % 256;
+			}
+			updatePwm = true;
+		}
+
+		if (diffH > 43 && (setpointHsv.s - actHsv.s) < diffH && actHsv.s > 1)
+		{
+			actHsv.s -= 2;
+			updatePwm = true;
+		}
+		else if (setpointHsv.s != actHsv.s)
+		{
+			actHsv.s += setpointHsv.s > actHsv.s ? 1 : -1;
 			updatePwm = true;
 		}
 	}
@@ -442,13 +488,6 @@ void KnxLed::fade()
 	if (updatePwm)
 	{
 		pwmControl();
-		if (returnStatusFctn != nullptr)
-		{
-			if ((actBrightness == 0) != (oldBrightness == 0))
-			{
-				returnStatus();
-			}
-		}
 	}
 }
 

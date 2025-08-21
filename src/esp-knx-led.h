@@ -179,7 +179,8 @@ public:
     void configDefaultBrightness(uint8_t brightness);
     void configDefaultTemperature(uint16_t temperature);
     void configDefaultHsv(hsv_t hsv);
-    void configDimmSpeed(uint8_t dimmSetSpeed);
+    void configDimSpeed(uint8_t dimSetSpeed);
+    void configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t fadeColorTime);
 
     void registerStatusCallback(callbackBool *fctn);
     void registerBrightnessCallback(callbackUint8 *fctn);
@@ -194,7 +195,7 @@ public:
     void setRgb(rgb_t rgb);
     void setHsv(hsv_t hsv);
 
-    void setRelDimmCmd(dpt3_t dimmCmd);
+    void setRelDimCmd(dpt3_t dimCmd);
     void setRelTemperatureCmd(dpt3_t temperatureCmd);
     void setRelHueCmd(dpt3_t hueCmd);
     void setRelSaturationCmd(dpt3_t saturationCmd);
@@ -229,8 +230,15 @@ private:
 #elif defined(LIBRETINY)
     unsigned int pwmFrequency = 1000;  // 1kHz
 #endif
-    uint8_t dimmSpeed = 6;
-    uint8_t dimmCount = 0;
+    uint8_t cycleTime = 4; // in ms, loop cycle time, used for fading
+    uint8_t relDimInterval = 6;  // in seconds, speed for relative dimming commands
+    uint8_t fadeUpInterval = 2; // in seconds, speed for fading up
+    uint8_t fadeDownInterval = 2; // in seconds, speed for fading down
+    uint8_t fadeColorInterval = 2; // in seconds, speed for fading color
+    uint8_t relDimCount = 0;
+    uint8_t fadeUpCount = 0;
+    uint8_t fadeDownCount = 0;
+    uint8_t fadeColorCount = 0;
 
     uint8_t defaultBrightness = MAX_BRIGHTNESS;
     uint8_t savedBrightness = 0;
@@ -250,7 +258,7 @@ private:
     bool isTwTempCh = false;      // Tunable White with brightness channel and temperature channel
     rgb_t whiteRgbEquivalent;     // Color temperature of white LED for RGBW
 
-    dpt3_t relDimmCmd;
+    dpt3_t relDimCmd;
     dpt3_t relTemperatureCmd;
     dpt3_t relHueCmd;
     dpt3_t relSaturationCmd;
@@ -262,6 +270,7 @@ private:
     callbackHsv *returnColorHsvFctn;
 
     void initOutputChannels(uint8_t usedChannels);
+    void relativeDimming();
     void fade();
     void pwmControl();
     void ledAnalogWrite(byte channel, uint16_t duty);
