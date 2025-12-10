@@ -127,7 +127,7 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 
 void KnxLed::setTemperature(uint16_t temperature)
 {
-	setpointTemperature = constrain(temperature, 2700, 6500);
+	setpointTemperature = constrain(temperature, minTemperature, maxTemperature);
 	returnTemperature();
 	relDimCmd.dimMode = IDLE;
 	relTemperatureCmd.dimMode = IDLE;
@@ -200,7 +200,7 @@ void KnxLed::configDefaultBrightness(uint8_t brightness)
 
 void KnxLed::configDefaultTemperature(uint16_t temperature)
 {
-	if (temperature == 0 || (temperature >= 2700 && temperature <= 6500))
+	if (temperature == 0 || (temperature >= minTemperature && temperature <= maxTemperature))
 	{
 		defaultTemperature = temperature;
 		if(setpointBrightness == 0)
@@ -208,6 +208,22 @@ void KnxLed::configDefaultTemperature(uint16_t temperature)
 			setpointTemperature = defaultTemperature;
     		actTemperature = defaultTemperature;
 		}
+	}
+}
+
+void KnxLed::configMinTemperature(uint16_t temperature)
+{
+	if (temperature < maxTemperature) {
+		minTemperature = temperature;
+		if (defaultTemperature < minTemperature) configDefaultTemperature(minTemperature);
+	}
+}
+
+void KnxLed::configMaxTemperature(uint16_t temperature)
+{
+	if(temperature > minTemperature) {
+		maxTemperature = temperature;
+		if (defaultTemperature > maxTemperature) configDefaultTemperature(maxTemperature);
 	}
 }
 
@@ -315,17 +331,17 @@ void KnxLed::relativeDimming()
 			relDimCmd.dimMode = IDLE;
 		}
 
-		if (relTemperatureCmd.dimMode == UP && actTemperature < 6500)
+		if (relTemperatureCmd.dimMode == UP && actTemperature < maxTemperature)
 		{
-			setpointTemperature = min(actTemperature + 20, 6500);
+			setpointTemperature = min<uint16_t>(actTemperature + 20, maxTemperature);
 			if (setpointTemperature % 300 == 0)
 			{
 				returnTemperature();
 			}
 		}
-		else if (relTemperatureCmd.dimMode == DOWN && actTemperature > 2700)
+		else if (relTemperatureCmd.dimMode == DOWN && actTemperature > minTemperature)
 		{
-			setpointTemperature = max(actTemperature - 20, 2700);
+			setpointTemperature = max<uint16_t>(actTemperature - 20, minTemperature);
 			if (setpointTemperature % 300 == 0)
 			{
 				returnTemperature();
@@ -511,10 +527,10 @@ void KnxLed::pwmControl()
 		if (isTwBipolar)
 		{
 			// 2-Wire tunable LEDs. Different polarity for each channel controlled by 4quadrant H-Brige
-			float maxBt = actBrightness * 1023.0 / MAX_BRIGHTNESS / 3800.0;
+			float maxBt = actBrightness * 1023.0 / MAX_BRIGHTNESS / rangeTemperature;
 
-			int dutyCh0 = constrain((actTemperature - 2700) * maxBt, 0, 1023) + 0.5;
-			int dutyCh1 = constrain((6500 - actTemperature) * maxBt, 0, 1023) + 0.5;
+			int dutyCh0 = constrain((actTemperature - minTemperature) * maxBt, 0, 1023) + 0.5;
+			int dutyCh1 = constrain((maxTemperature - actTemperature) * maxBt, 0, 1023) + 0.5;
 #if defined(ESP32)
 			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0], dutyCh0, 0);
 			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1], dutyCh1, dutyCh0);
@@ -532,15 +548,15 @@ void KnxLed::pwmControl()
 			uint16_t dutyCh1 = 0;
 			if (!isTwTempCh)
 			{
-				dutyCh0 = constrain(min(2 * (actTemperature - 2700), 3800) / 3800.0 * actBrightness, 0, 255) + 0.5;
-				dutyCh1 = constrain(min(2 * (6500 - actTemperature), 3800) / 3800.0 * actBrightness, 0, 255) + 0.5;
+				dutyCh0 = constrain(min<uint16_t>(2 * (actTemperature - minTemperature), rangeTemperature) / rangeTemperature * actBrightness, 0, 255) + 0.5;
+				dutyCh1 = constrain(min<uint16_t>(2 * (maxTemperature - actTemperature), rangeTemperature) / rangeTemperature * actBrightness, 0, 255) + 0.5;
 				dutyCh0 = lookupTable[dutyCh0];
 				dutyCh1 = lookupTable[dutyCh1];
 			}
 			else if (actBrightness > 0)
 			{
 				dutyCh0 = lookupTableTwBulb[actBrightness];
-				dutyCh1 = constrain((actTemperature - 2700) / 3800.0 * 1023, 0, 1023) + 0.5;
+				dutyCh1 = constrain((actTemperature - minTemperature) / rangeTemperature * 1023, 0, 1023) + 0.5;
 			}
 			ledAnalogWrite(0, dutyCh0);
 			ledAnalogWrite(1, dutyCh1);
@@ -602,15 +618,15 @@ void KnxLed::pwmControl()
 
 		if (!isTwTempCh)
 		{
-			dutyCh3 = constrain(min(2 * (actTemperature - 2700), 3800) / 3800.0 * (actBrightness - actHsv.v), 0, 255) + 0.5;
-			dutyCh4 = constrain(min(2 * (6500 - actTemperature), 3800) / 3800.0 * (actBrightness - actHsv.v), 0, 255) + 0.5;
+			dutyCh3 = constrain(min<uint16_t>(2 * (actTemperature - minTemperature), rangeTemperature) / rangeTemperature * (actBrightness - actHsv.v), 0, 255) + 0.5;
+			dutyCh4 = constrain(min<uint16_t>(2 * (maxTemperature - actTemperature), rangeTemperature) / rangeTemperature * (actBrightness - actHsv.v), 0, 255) + 0.5;
 			dutyCh3 = lookupTable[dutyCh3];
 			dutyCh4 = lookupTable[dutyCh4];		
 		}
 		else if (actBrightness > actHsv.v)
 		{
 			dutyCh3 = lookupTableTwBulb[constrain(actBrightness - actHsv.v, 0, 255)];
-			dutyCh4 = constrain((actTemperature - 2700) / 3800.0 * 1023, 0, 1023) + 0.5;
+			dutyCh4 = constrain((actTemperature - minTemperature) / rangeTemperature * 1023, 0, 1023) + 0.5;
 		}
 		ledAnalogWrite(3, dutyCh3);
 		ledAnalogWrite(4, dutyCh4);

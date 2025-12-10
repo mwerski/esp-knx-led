@@ -178,6 +178,8 @@ public:
 
     void configDefaultBrightness(uint8_t brightness);
     void configDefaultTemperature(uint16_t temperature);
+    void configMinTemperature(uint16_t temperature);
+    void configMaxTemperature(uint16_t temperature);
     void configDefaultHsv(hsv_t hsv);
     void configDimSpeed(uint8_t dimSetSpeed);
     void configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t fadeColorTime);
@@ -245,7 +247,10 @@ private:
     uint8_t setpointBrightness = 0;
     uint8_t actBrightness = 0;
 
-    uint16_t defaultTemperature = 3500;
+    uint16_t defaultTemperature = 3000;
+    uint16_t minTemperature = 2700;
+    uint16_t maxTemperature = 4000;
+    uint16_t rangeTemperature = maxTemperature - minTemperature;
     uint16_t setpointTemperature = defaultTemperature;
     uint16_t actTemperature = defaultTemperature;
 
