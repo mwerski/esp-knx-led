@@ -186,6 +186,11 @@ void KnxLed::setHsv(hsv_t hsv)
 	setBrightness(hsv.v);
 }
 
+void KnxLed::configSetActive(bool mode)
+{
+	active = mode;
+}
+
 void KnxLed::configDefaultBrightness(uint8_t brightness)
 {
 	if (brightness >= 0 && brightness <= MAX_BRIGHTNESS)
@@ -295,7 +300,7 @@ void KnxLed::setRelSaturationCmd(dpt3_t saturationCmd)
 
 void KnxLed::loop()
 {
-	if (initialized)
+	if (initialized && active)
 	{
 		relativeDimming();
 		fade();
@@ -648,6 +653,11 @@ void KnxLed::ledAnalogWrite(byte channel, uint16_t duty)
 #else
 	analogWrite(outputPins[channel], duty);
 #endif
+}
+
+bool KnxLed::getActive()
+{
+	return active;
 }
 
 bool KnxLed::getSwitchState()

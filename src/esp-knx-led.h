@@ -176,6 +176,7 @@ public:
     void initRgbwLight(uint8_t rPin, uint8_t gPin, uint8_t bPin, uint8_t wPin, rgb_t whiteLedRgbEquivalent);
     void initRgbcctLight(uint8_t rPin, uint8_t gPin, uint8_t bPin, uint8_t cwPin, uint8_t wwPin, __cctMode cctMode);
 
+		void configSetActive(bool active);
     void configDefaultBrightness(uint8_t brightness);
     void configDefaultTemperature(uint16_t temperature);
     void configMinTemperature(uint16_t temperature);
@@ -204,6 +205,7 @@ public:
 
     void sendStatusUpdate();
 
+		bool getActive();
     bool getSwitchState();
     uint8_t getBrightness();
     uint16_t getTemperature();
@@ -232,6 +234,7 @@ private:
 #elif defined(LIBRETINY)
     unsigned int pwmFrequency = 1000;  // 1kHz
 #endif
+		bool active = false;
     uint8_t cycleTime = 4; // in ms, loop cycle time, used for fading
     uint8_t relDimInterval = 6;  // in seconds, speed for relative dimming commands
     uint8_t fadeUpInterval = 2; // in seconds, speed for fading up
