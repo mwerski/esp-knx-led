@@ -250,9 +250,9 @@ private:
     uint8_t setpointBrightness = 0;
     uint8_t actBrightness = 0;
 
-    uint16_t defaultTemperature = 3000;
+    uint16_t defaultTemperature = 3500;
     uint16_t minTemperature = 2700;
-    uint16_t maxTemperature = 4000;
+    uint16_t maxTemperature = 6500;
     uint16_t rangeTemperature = maxTemperature - minTemperature;
     uint16_t setpointTemperature = defaultTemperature;
     uint16_t actTemperature = defaultTemperature;
