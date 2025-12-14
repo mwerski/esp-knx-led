@@ -1,6 +1,21 @@
 #include "esp-knx-led.h"
 #if defined(ESP32)
-byte nextEsp32LedChannel = LEDC_CHANNEL_0; // next available LED channel for ESP32
+// byte nextEsp32LedChannel = LEDC_CHANNEL_0; // next available LED channel for ESP32
+uint8_t KnxLed::nextLedcChannel = 0;
+
+bool KnxLed::allocateLedc(uint8_t count, ledc_channel_t* out)
+{
+    if (count == 0) return false;
+
+    if (nextLedcChannel + count > LEDC_CHANNEL_MAX + 1) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        out[i] = static_cast<ledc_channel_t>(nextLedcChannel++);
+    }
+    return true;
+}
 #endif
 
 void KnxLed::switchLight(bool state)
@@ -532,10 +547,10 @@ void KnxLed::pwmControl()
 			int dutyCh0 = constrain((actTemperature - minTemperature) * maxBt, 0, 1023) + 0.5;
 			int dutyCh1 = constrain((maxTemperature - actTemperature) * maxBt, 0, 1023) + 0.5;
 #if defined(ESP32)
-			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0], dutyCh0, 0);
-			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1], dutyCh1, dutyCh0);
-			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[0]);
-			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1]);
+			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0+channelOffset], dutyCh0, 0);
+			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1+channelOffset], dutyCh1, dutyCh0);
+			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[0+channelOffset]);
+			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1+channelOffset]);
 #else
 			// TODO
 			ledAnalogWrite(0, lookupTable[dutyCh0]);
@@ -635,6 +650,7 @@ void KnxLed::pwmControl()
 
 void KnxLed::ledAnalogWrite(byte channel, uint16_t duty)
 {
+	Serial.print("Analog Write: "); Serial.print(channel); Serial.print(" / "); Serial.print("X"); Serial.print(" / "); Serial.println(duty);
 #if defined(ESP32)
 	ledcWrite(esp32LedCh[channel], duty);
 #elif defined(LIBRETINY)
@@ -812,6 +828,25 @@ void KnxLed::initRgbcctLight(uint8_t rPin, uint8_t gPin, uint8_t bPin, uint8_t c
 void KnxLed::initOutputChannels(uint8_t usedChannels)
 {
 #if defined(ESP32)
+
+    if (initialized) return; // ⛔ Schutz gegen Re-Init
+
+		uint8_t start = nextLedcChannel; 
+  	if (!allocateLedc(usedChannels, esp32LedCh)) {
+			Serial.println("LEDC allocation failed");
+        initialized = false;
+        return;
+    }
+		Serial.print("Next: "); Serial.println(nextLedcChannel);
+		channelOffset = nextLedcChannel;
+
+    for (uint8_t i = 0; i < usedChannels; i++)
+    {
+        ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
+        ledcAttachPin(outputPins[i], esp32LedCh[i]);
+    }
+		initialized = true;
+/*
 	if (nextEsp32LedChannel <= LEDC_CHANNEL_MAX - usedChannels)
 	{
 		for (uint i = 0; i < usedChannels; i++)
@@ -820,7 +855,7 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 			ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
 			ledcAttachPin(outputPins[i], esp32LedCh[i]);
 		}
-	}
+	} */
 #else
 	for (uint8_t i = 0; i < usedChannels; i++)
 	{
@@ -832,8 +867,8 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 	#else
 		analogWriteFrequency(pwmFrequency);
 	#endif
-#endif
 	initialized = true;
+#endif
 }
 
 void KnxLed::rgb2hsv(const rgb_t rgb, hsv_t &hsv)

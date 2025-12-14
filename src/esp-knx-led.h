@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #if defined(ESP32)
 #include "driver/ledc.h"
-extern byte nextEsp32LedChannel; // next available LED channel for ESP32
+// extern byte nextEsp32LedChannel; // next available LED channel for ESP32
 #elif defined(ESP8266)
 // No special includes needed for ESP8266
 #elif defined(LIBRETINY)
@@ -226,7 +226,10 @@ private:
     // Calculation = truncate(1/(1E-6 * 1023)) for the PWM frequencies with all (or most) discrete PWM steps. (master)
 #if defined(ESP32)
     unsigned int pwmFrequency = 5000; // 5kHz
-    ledc_channel_t esp32LedCh[5];
+    ledc_channel_t esp32LedCh[8];
+		uint8_t channelOffset = 0;
+    static uint8_t nextLedcChannel;
+    static bool allocateLedc(uint8_t count, ledc_channel_t* out);
 #elif defined(ESP8266)
     unsigned int pwmFrequency = 2000;  // 2kHz bei Library >=3.0.0, 50Hz bei Library 2.6.3
 #elif defined(LIBRETINY)
