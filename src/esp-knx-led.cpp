@@ -548,7 +548,7 @@ void KnxLed::pwmControl()
 	}
 	case DIMMABLE:
 	{
-		int dutyCh0 = actBrightness;
+		const uint8_t dutyCh0 = actBrightness;
 		ledAnalogWrite(0, lookupTable[dutyCh0]);
 		break;
 	}
@@ -556,11 +556,17 @@ void KnxLed::pwmControl()
 	{
 		if (isTwBipolar)
 		{
+			if (rangeTemperature == 0)
+			{
+				ledAnalogWrite(0, 0);
+				ledAnalogWrite(1, 0);
+				break;
+			}
 			// 2-Wire tunable LEDs. Different polarity for each channel controlled by 4quadrant H-Brige
-			float maxBt = actBrightness * 1023.0 / MAX_BRIGHTNESS / rangeTemperature;
+			float maxBt = ((float)actBrightness * 1023.0f) / ((float)MAX_BRIGHTNESS * (float)rangeTemperature);
 
-			int dutyCh0 = constrain((actTemperature - minTemperature) * maxBt, 0, 1023) + 0.5;
-			int dutyCh1 = constrain((maxTemperature - actTemperature) * maxBt, 0, 1023) + 0.5;
+			int dutyCh0 = (int)(clampf(((float)(actTemperature - minTemperature) * maxBt), 0.0f, 1023.0f) + 0.5f);
+			int dutyCh1 = (int)(clampf(((float)(maxTemperature - actTemperature) * maxBt), 0.0f, 1023.0f) + 0.5f);
 #if defined(ESP32)
 			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0], dutyCh0, 0);
 			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1], dutyCh1, dutyCh0);
@@ -568,8 +574,8 @@ void KnxLed::pwmControl()
 			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1]);
 #else
 			// TODO
-			ledAnalogWrite(0, lookupTable[dutyCh0]);
-			ledAnalogWrite(1, lookupTable[dutyCh1]);
+			ledAnalogWrite(0, lookupTable[(uint8_t)constrain(dutyCh0 / 4, 0, 255)]);
+			ledAnalogWrite(1, lookupTable[(uint8_t)constrain(dutyCh1 / 4, 0, 255)]);
 #endif
 		}
 		else
@@ -578,26 +584,37 @@ void KnxLed::pwmControl()
 			uint16_t dutyCh1 = 0;
 			if (!isTwTempCh)
 			{
-				if (rangeTemperature == 0) {
-						// Schutz gegen Division durch 0 (sollte mit configMin/Max nicht mehr passieren)
-						ledAnalogWrite(0, 0);
-						ledAnalogWrite(1, 0);
-						break;
+				if (rangeTemperature == 0)
+				{
+						dutyCh0 = 0;
+						dutyCh1 = 0;
+				}
+				else
+				{
+					// Use float math; result in 0..255 then lookup -> 0..1023
+					float f0 = (2.0f * (float)(actTemperature - minTemperature)) / (float)rangeTemperature;
+					float f1 = (2.0f * (float)(maxTemperature - actTemperature)) / (float)rangeTemperature;
+
+					uint8_t v0 = (uint8_t)(clampf(f0, 0.0f, 1.0f) * (float)actBrightness + 0.5f);
+					uint8_t v1 = (uint8_t)(clampf(f1, 0.0f, 1.0f) * (float)actBrightness + 0.5f);
+
+					dutyCh0 = lookupTable[v0];
+					dutyCh1 = lookupTable[v1];
 				}
 
-				float frac0 = (float)min<uint16_t>((uint16_t)(2u * (actTemperature - minTemperature)), rangeTemperature) / (float)rangeTemperature;
-				float frac1 = (float)min<uint16_t>((uint16_t)(2u * (maxTemperature - actTemperature)), rangeTemperature) / (float)rangeTemperature;
-
-				uint16_t b0 = (uint16_t)(constrain(frac0 * (float)actBrightness, 0.0f, 255.0f) + 0.5f);
-				uint16_t b1 = (uint16_t)(constrain(frac1 * (float)actBrightness, 0.0f, 255.0f) + 0.5f);
-
-				dutyCh0 = lookupTable[b0];
-				dutyCh1 = lookupTable[b1];
 			}
-			else if (actBrightness > 0)
+			else 
 			{
-				dutyCh0 = lookupTableTwBulb[actBrightness];
-				dutyCh1 = constrain((actTemperature - minTemperature) / rangeTemperature * 1023, 0, 1023) + 0.5;
+				if (actBrightness > 0)
+				{
+					dutyCh0 = lookupTableTwBulb[actBrightness];
+					dutyCh1 = (uint16_t)(tempFrac01() * 1023.0f + 0.5f);
+				}
+				else
+				{
+					dutyCh0 = 0;
+					dutyCh1 = 0;
+				}
 			}
 			ledAnalogWrite(0, dutyCh0);
 			ledAnalogWrite(1, dutyCh1);
@@ -616,28 +633,53 @@ void KnxLed::pwmControl()
 	}
 	case RGBW:
 	{
-		/*rgb_t _rgb;
-		hsv2rgb(actHsv, _rgb);
-		uint8_t white = rgb2White(_rgb);*/
-		
 		rgb_t _rgb;
-		uint8_t white;				
+		uint8_t white = 0;				
 		if (currentLightMode == MODE_CCT)
 		{
-			kelvin2rgb(actTemperature, MAX_BRIGHTNESS, _rgb);
-			float r = _rgb.red + (_rgb.red - whiteRgbEquivalent.red)/2.0;
-			float g = _rgb.green + (_rgb.green - whiteRgbEquivalent.green)/2.0;
-			float b = _rgb.blue + (_rgb.blue - whiteRgbEquivalent.blue)/2.0;
-			float factor = max_f(r, g, b)/actBrightness;
-			_rgb.red = constrain(r/factor, 0, 255) + 0.5;
-			_rgb.green = constrain(g/factor, 0, 255) + 0.5;
-			_rgb.blue = constrain(b/factor, 0, 255) + 0.5;
-			white = actBrightness;
+			// Guard: avoid division by zero and weird scaling when brightness is 0
+			if (actBrightness == 0)
+			{
+				_rgb = {0, 0, 0};
+				white = 0;
+			}
+			else
+			{
+				kelvin2rgb(actTemperature, MAX_BRIGHTNESS, _rgb);
+				// If the equivalent is invalid, fall back to "pure white channel"
+				if (whiteRgbEquivalent.red == 0 || whiteRgbEquivalent.green == 0 || whiteRgbEquivalent.blue == 0)
+				{
+					_rgb = {0, 0, 0};
+					white = actBrightness;
+				}
+				else
+				{
+					float r = (float)_rgb.red   + ((float)_rgb.red   - (float)whiteRgbEquivalent.red)   / 2.0f;
+					float g = (float)_rgb.green + ((float)_rgb.green - (float)whiteRgbEquivalent.green) / 2.0f;
+					float b = (float)_rgb.blue  + ((float)_rgb.blue  - (float)whiteRgbEquivalent.blue)  / 2.0f;
+
+					float mx = max_f(r, g, b);
+					float factor = (mx <= 0.0f) ? 1.0f : (mx / (float)actBrightness);
+
+					_rgb.red   = (uint8_t)(clampf(r / factor, 0.0f, 255.0f) + 0.5f);
+					_rgb.green = (uint8_t)(clampf(g / factor, 0.0f, 255.0f) + 0.5f);
+					_rgb.blue  = (uint8_t)(clampf(b / factor, 0.0f, 255.0f) + 0.5f);
+					white = actBrightness;
+				}
+			}
 		}
 		else
 		{
 			hsv2rgb(actHsv, _rgb);
-			white = rgb2White(_rgb);
+			// White calculation can divide by 0 if equivalent is invalid
+			if (whiteRgbEquivalent.red == 0 || whiteRgbEquivalent.green == 0 || whiteRgbEquivalent.blue == 0)
+			{
+				white = 0;
+			}
+			else
+			{
+				white = rgb2White(_rgb);
+			}
 		}
 
 		ledAnalogWrite(0, lookupTable[_rgb.red]);
@@ -649,7 +691,7 @@ void KnxLed::pwmControl()
 	case RGBCT:
 		rgb_t _rgb;
 		hsv2rgb(actHsv, _rgb);
-		// Serial.printf("PWM IST: R=%3d,G=%3d,B=%3d H=%3d,S=%3d,V=%3d\n", _rgb.red, _rgb.green, _rgb.blue, actHsv.h, actHsv.s, actHsv.v);
+		Serial.printf("PWM IST: R=%3d,G=%3d,B=%3d H=%3d,S=%3d,V=%3d\n", _rgb.red, _rgb.green, _rgb.blue, actHsv.h, actHsv.s, actHsv.v);
 
 		ledAnalogWrite(0, lookupTable[_rgb.red]);
 		ledAnalogWrite(1, lookupTable[_rgb.green]);
@@ -659,15 +701,32 @@ void KnxLed::pwmControl()
 
 		if (!isTwTempCh)
 		{
-			dutyCh3 = constrain(min<uint16_t>(2 * (actTemperature - minTemperature), rangeTemperature) / rangeTemperature * (actBrightness - actHsv.v), 0, 255) + 0.5;
-			dutyCh4 = constrain(min<uint16_t>(2 * (maxTemperature - actTemperature), rangeTemperature) / rangeTemperature * (actBrightness - actHsv.v), 0, 255) + 0.5;
-			dutyCh3 = lookupTable[dutyCh3];
-			dutyCh4 = lookupTable[dutyCh4];		
+			if (rangeTemperature == 0 || actBrightness <= actHsv.v)
+			{
+				dutyCh3 = 0;
+				dutyCh4 = 0;
+			}
+			else
+			{
+				float extra = (float)(actBrightness - actHsv.v);
+				float f3 = (2.0f * (float)(actTemperature - minTemperature)) / (float)rangeTemperature;
+				float f4 = (2.0f * (float)(maxTemperature - actTemperature)) / (float)rangeTemperature;
+				uint8_t v3 = (uint8_t)(clampf(f3, 0.0f, 1.0f) * extra + 0.5f);
+				uint8_t v4 = (uint8_t)(clampf(f4, 0.0f, 1.0f) * extra + 0.5f);
+				dutyCh3 = lookupTable[v3];
+				dutyCh4 = lookupTable[v4];
+			}
 		}
 		else if (actBrightness > actHsv.v)
 		{
-			dutyCh3 = lookupTableTwBulb[constrain(actBrightness - actHsv.v, 0, 255)];
-			dutyCh4 = constrain((actTemperature - minTemperature) / rangeTemperature * 1023, 0, 1023) + 0.5;
+			uint8_t extra = (uint8_t)constrain((int)actBrightness - (int)actHsv.v, 0, 255);
+			dutyCh3 = lookupTableTwBulb[extra];
+			dutyCh4 = (uint16_t)(tempFrac01() * 1023.0f + 0.5f);
+		}
+		else
+		{
+			dutyCh3 = 0;
+			dutyCh4 = 0;
 		}
 		ledAnalogWrite(3, dutyCh3);
 		ledAnalogWrite(4, dutyCh4);
