@@ -525,6 +525,20 @@ void KnxLed::fade()
 
 void KnxLed::pwmControl()
 {
+
+	// Helper: clamp float to [lo..hi]
+	auto clampf = [](float x, float lo, float hi) -> float {
+			return (x < lo) ? lo : (x > hi) ? hi : x;
+	};
+
+	// Helper: temperature fraction 0..1 (guarded)
+	auto tempFrac01 = [&]() -> float {
+			if (rangeTemperature == 0) return 0.0f;
+			float num = (float)(actTemperature - minTemperature);
+			float den = (float)rangeTemperature;
+			return clampf(num / den, 0.0f, 1.0f);
+	};
+
 	switch (lightType)
 	{
 	case SWITCHABLE:
