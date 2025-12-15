@@ -1,20 +1,15 @@
 #include "esp-knx-led.h"
 #if defined(ESP32)
-// byte nextEsp32LedChannel = LEDC_CHANNEL_0; // next available LED channel for ESP32
 uint8_t KnxLed::nextLedcChannel = 0;
 
-bool KnxLed::allocateLedc(uint8_t count, ledc_channel_t* out)
-{
-    if (count == 0) return false;
-
-    if (nextLedcChannel + count > LEDC_CHANNEL_MAX + 1) {
-        return false;
-    }
-
-    for (uint8_t i = 0; i < count; i++) {
-        out[i] = static_cast<ledc_channel_t>(nextLedcChannel++);
-    }
-    return true;
+bool KnxLed::allocateLedc(uint8_t count, ledc_channel_t* out) {
+	if (count == 0 || out == nullptr) return false;
+	// LEDC_CHANNEL_MAX ist der höchste gueltige Channel-Index (typ. 7/15 je nach SoC/SDK)
+	if ((uint16_t)nextLedcChannel + (uint16_t)count > (uint16_t)LEDC_CHANNEL_MAX + 1u) return false;
+	for (uint8_t i = 0; i < count; i++) {
+		out[i] = static_cast<ledc_channel_t>(nextLedcChannel++);
+	}
+	return true;
 }
 #endif
 
@@ -569,10 +564,21 @@ void KnxLed::pwmControl()
 			uint16_t dutyCh1 = 0;
 			if (!isTwTempCh)
 			{
-				dutyCh0 = constrain(min<uint16_t>(2 * (actTemperature - minTemperature), rangeTemperature) / rangeTemperature * actBrightness, 0, 255) + 0.5;
-				dutyCh1 = constrain(min<uint16_t>(2 * (maxTemperature - actTemperature), rangeTemperature) / rangeTemperature * actBrightness, 0, 255) + 0.5;
-				dutyCh0 = lookupTable[dutyCh0];
-				dutyCh1 = lookupTable[dutyCh1];
+				if (rangeTemperature == 0) {
+						// Schutz gegen Division durch 0 (sollte mit configMin/Max nicht mehr passieren)
+						ledAnalogWrite(0, 0);
+						ledAnalogWrite(1, 0);
+						break;
+				}
+
+				float frac0 = (float)min<uint16_t>((uint16_t)(2u * (actTemperature - minTemperature)), rangeTemperature) / (float)rangeTemperature;
+				float frac1 = (float)min<uint16_t>((uint16_t)(2u * (maxTemperature - actTemperature)), rangeTemperature) / (float)rangeTemperature;
+
+				uint16_t b0 = (uint16_t)(constrain(frac0 * (float)actBrightness, 0.0f, 255.0f) + 0.5f);
+				uint16_t b1 = (uint16_t)(constrain(frac1 * (float)actBrightness, 0.0f, 255.0f) + 0.5f);
+
+				dutyCh0 = lookupTable[b0];
+				dutyCh1 = lookupTable[b1];
 			}
 			else if (actBrightness > 0)
 			{
@@ -656,7 +662,9 @@ void KnxLed::pwmControl()
 
 void KnxLed::ledAnalogWrite(byte channel, uint16_t duty)
 {
+	#ifdef DEBUG
 	Serial.print("Analog Write: "); Serial.print(channel); Serial.print(" / "); Serial.print("X"); Serial.print(" / "); Serial.println(duty);
+	#endif
 #if defined(ESP32)
 	ledcWrite(esp32LedCh[channel], duty);
 #elif defined(LIBRETINY)
@@ -834,33 +842,26 @@ void KnxLed::initRgbcctLight(uint8_t rPin, uint8_t gPin, uint8_t bPin, uint8_t c
 void KnxLed::initOutputChannels(uint8_t usedChannels)
 {
 #if defined(ESP32)
+	if (initialized) return; // Schutz gegen Re-Init
+	// Channels für diese Instanz reservieren (instanzlokal in esp32LedCh[])
+	if (!allocateLedc(usedChannels, esp32LedCh)) {
+		Serial.println("LEDC allocation failed");
+		initialized = false;
+		return;
+	}
 
-    if (initialized) return; // ⛔ Schutz gegen Re-Init
+	// Setup + Attach pro Pin/Channel dieser Instanz
+	for (uint8_t i = 0; i < usedChannels; i++) {
+		ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
+		ledcAttachPin(outputPins[i], esp32LedCh[i]);
+	}
 
-		uint8_t start = nextLedcChannel; 
-  	if (!allocateLedc(usedChannels, esp32LedCh)) {
-			Serial.println("LEDC allocation failed");
-        initialized = false;
-        return;
-    }
-		Serial.print("Next: "); Serial.println(nextLedcChannel);
-
-    for (uint8_t i = 0; i < usedChannels; i++)
-    {
-        ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
-        ledcAttachPin(outputPins[i], esp32LedCh[i]);
-    }
-		initialized = true;
-/*
-	if (nextEsp32LedChannel <= LEDC_CHANNEL_MAX - usedChannels)
-	{
-		for (uint i = 0; i < usedChannels; i++)
-		{
-			esp32LedCh[i] = static_cast<ledc_channel_t>(nextEsp32LedChannel++);
-			ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
-			ledcAttachPin(outputPins[i], esp32LedCh[i]);
-		}
-	} */
+	initialized = true;
+	#ifdef DEBUG
+	Serial.printf("LEDC channels: ");
+	for (uint8_t i=0;i<usedChannels;i++) Serial.printf("%d ", (int)esp32LedCh[i]);
+	Serial.println();
+	#endif
 #else
 	for (uint8_t i = 0; i < usedChannels; i++)
 	{

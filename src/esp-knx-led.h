@@ -226,7 +226,7 @@ private:
     // Calculation = truncate(1/(1E-6 * 1023)) for the PWM frequencies with all (or most) discrete PWM steps. (master)
 #if defined(ESP32)
     unsigned int pwmFrequency = 5000; // 5kHz
-    ledc_channel_t esp32LedCh[8];
+    ledc_channel_t esp32LedCh[5];
     static uint8_t nextLedcChannel;
     static bool allocateLedc(uint8_t count, ledc_channel_t* out);
 #elif defined(ESP8266)
