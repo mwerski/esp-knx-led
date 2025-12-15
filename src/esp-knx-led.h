@@ -227,7 +227,6 @@ private:
 #if defined(ESP32)
     unsigned int pwmFrequency = 5000; // 5kHz
     ledc_channel_t esp32LedCh[8];
-		uint8_t channelOffset = 0;
     static uint8_t nextLedcChannel;
     static bool allocateLedc(uint8_t count, ledc_channel_t* out);
 #elif defined(ESP8266)

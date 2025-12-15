@@ -230,7 +230,10 @@ void KnxLed::configMinTemperature(uint16_t temperature)
 {
 	if (temperature < maxTemperature) {
 		minTemperature = temperature;
+		rangeTemperature = maxTemperature - minTemperature;   // <-- hinzufügen
 		if (defaultTemperature < minTemperature) configDefaultTemperature(minTemperature);
+		setpointTemperature = constrain(setpointTemperature, minTemperature, maxTemperature);
+		actTemperature = constrain(actTemperature, minTemperature, maxTemperature);
 	}
 }
 
@@ -238,7 +241,10 @@ void KnxLed::configMaxTemperature(uint16_t temperature)
 {
 	if(temperature > minTemperature) {
 		maxTemperature = temperature;
+		rangeTemperature = maxTemperature - minTemperature;   // <-- hinzufügen
 		if (defaultTemperature > maxTemperature) configDefaultTemperature(maxTemperature);
+		setpointTemperature = constrain(setpointTemperature, minTemperature, maxTemperature);
+		actTemperature = constrain(actTemperature, minTemperature, maxTemperature);
 	}
 }
 
@@ -547,10 +553,10 @@ void KnxLed::pwmControl()
 			int dutyCh0 = constrain((actTemperature - minTemperature) * maxBt, 0, 1023) + 0.5;
 			int dutyCh1 = constrain((maxTemperature - actTemperature) * maxBt, 0, 1023) + 0.5;
 #if defined(ESP32)
-			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0+channelOffset], dutyCh0, 0);
-			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1+channelOffset], dutyCh1, dutyCh0);
-			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[0+channelOffset]);
-			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1+channelOffset]);
+			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[0], dutyCh0, 0);
+			ledc_set_duty_with_hpoint(LEDC_HIGH_SPEED_MODE, esp32LedCh[1], dutyCh1, dutyCh0);
+			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[0]);
+			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1]);
 #else
 			// TODO
 			ledAnalogWrite(0, lookupTable[dutyCh0]);
@@ -838,7 +844,6 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
         return;
     }
 		Serial.print("Next: "); Serial.println(nextLedcChannel);
-		channelOffset = nextLedcChannel;
 
     for (uint8_t i = 0; i < usedChannels; i++)
     {
