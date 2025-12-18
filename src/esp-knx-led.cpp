@@ -132,6 +132,7 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 		relDimCmd.dimMode = IDLE;
 		relTemperatureCmd.dimMode = IDLE;
 		setpointHsv.v = brightness;
+		if (lightType == RGB || lightType == RGBW || lightType == RGBCT) returnColors();
 	}
 }
 
