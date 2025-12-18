@@ -209,9 +209,11 @@ public:
     uint16_t getTemperature();
     rgb_t getRgb();
     hsv_t getHsv();
-    void rgb2hsv(const rgb_t rgb, hsv_t &hsv);
-    void hsv2rgb(const hsv_t hsv, rgb_t &rgb);
-    void kelvin2rgb(const uint16_t temperature, const uint8_t brightness, rgb_t &rgb);
+    void rgb2hsv(const rgb_t rgb, hsv_t &hsv) const;
+    void hsv2rgb(const hsv_t hsv, rgb_t &rgb) const;
+    void kelvin2rgb(const uint16_t temperature, const uint8_t brightness, rgb_t &rgb) const;
+
+		void computeStatusColors(hsv_t &hsv, rgb_t &rgb) const;
 
     void loop();
 

@@ -13,6 +13,31 @@ bool KnxLed::allocateLedc(uint8_t count, ledc_channel_t* out) {
 }
 #endif
 
+void KnxLed::computeStatusColors(hsv_t &hsv, rgb_t &rgb) const
+{
+	// Wenn aus
+	if (setpointBrightness == 0) {
+		hsv = {0, 0, 0};
+		rgb = {0, 0, 0};
+		return;
+	}
+
+	if (currentLightMode == MODE_RGB) {
+		// RGB-Modus: Status basiert auf setpointHsv (aber V konsistent halten)
+		hsv = setpointHsv;
+		hsv.v = setpointBrightness;
+		hsv2rgb(hsv, rgb);
+		return;
+	}
+
+	// CCT-Modus: Status aus Temperatur und Brightness ableiten (ohne setpointHsv zu überschreiben!)
+	kelvin2rgb(setpointTemperature, setpointBrightness, rgb);
+	rgb2hsv(rgb, hsv);
+
+	// V konsistent setzen
+	hsv.v = setpointBrightness;
+}
+
 void KnxLed::switchLight(bool state)
 {
 	switch (lightType)
@@ -124,29 +149,45 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 	if (brightness != setpointBrightness)
 	{
 		setpointBrightness = constrain(brightness, 0, MAX_BRIGHTNESS);
-		if (setpointBrightness > 0 && saveValue)
-		{
-			savedBrightness = setpointBrightness;
-		}
+
+		if (setpointBrightness > 0 && saveValue) savedBrightness = setpointBrightness;
+
 		returnBrightness();
+
+		if (lightType == RGB || lightType == RGBW || lightType == RGBCT) returnColors(); // RGB/HSV Status folgt Helligkeit
+
 		relDimCmd.dimMode = IDLE;
 		relTemperatureCmd.dimMode = IDLE;
 		setpointHsv.v = brightness;
-		if (lightType == RGB || lightType == RGBW || lightType == RGBCT) returnColors();
 	}
 }
 
 void KnxLed::setTemperature(uint16_t temperature)
 {
 	setpointTemperature = constrain(temperature, minTemperature, maxTemperature);
+	// Statusausgabe: Temperatur wurde gesetzt
 	returnTemperature();
+
+	// Wenn der effektive Farbstatus von der Temperatur abhaengt
+	// -> bei RGB/RGBW/RGBCT auch Color-Status ausgeben (RGB/HSV abgeleitet aus CT + Brightness)
+	if (lightType == RGB || lightType == RGBW || lightType == RGBCT) returnColors();
+
+	// Relative Kommandos stoppen
 	relDimCmd.dimMode = IDLE;
 	relTemperatureCmd.dimMode = IDLE;
+
+	// Modus auf CCT setzen; "actTemperature" im CCT Mode synchronisieren
 	if (currentLightMode != MODE_CCT)
 	{
 		actTemperature = setpointTemperature;
 		currentLightMode = MODE_CCT;
 	}
+	else
+	{
+		// Optional: actTemperature wird auch im MODE_CCT sofort korrekt nachgefuehrt ist:
+		actTemperature = setpointTemperature;
+	}
+
 	if (lightType == RGB /*|| lightType == RGBW*/) // no separate CCT channels
 	{
 		rgb_t _rgb;
@@ -808,16 +849,14 @@ void KnxLed::returnTemperature()
 
 void KnxLed::returnColors()
 {
-	if (returnColorHsvFctn != nullptr)
-	{
-		returnColorHsvFctn(setpointHsv);
-	}
-	if (returnColorRgbFctn != nullptr)
-	{
-		rgb_t _rgb;
-		hsv2rgb(setpointHsv, _rgb);
-		returnColorRgbFctn(_rgb);
-	}
+	hsv_t hsv;
+	rgb_t rgb;
+	computeStatusColors(hsv, rgb);
+
+	if (returnColorHsvFctn != nullptr) returnColorHsvFctn(hsv);
+
+	if (returnColorRgbFctn != nullptr) returnColorRgbFctn(rgb);
+
 }
 
 void KnxLed::registerStatusCallback(callbackBool *fctn)
@@ -954,7 +993,7 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 #endif
 }
 
-void KnxLed::rgb2hsv(const rgb_t rgb, hsv_t &hsv)
+void KnxLed::rgb2hsv(const rgb_t rgb, hsv_t &hsv) const
 {
 	float r = rgb.red / 255.0f;
 	float g = rgb.green / 255.0f;
@@ -990,7 +1029,7 @@ void KnxLed::rgb2hsv(const rgb_t rgb, hsv_t &hsv)
 	hsv.v = constrain(v * 255.0f, 0, 255) + 0.5;
 }
 
-void KnxLed::hsv2rgb(const hsv_t hsv, rgb_t &rgb)
+void KnxLed::hsv2rgb(const hsv_t hsv, rgb_t &rgb) const
 {
 	float h = hsv.h / 255.0f;
 	float s = hsv.s / 255.0f;
@@ -1030,7 +1069,7 @@ void KnxLed::hsv2rgb(const hsv_t hsv, rgb_t &rgb)
 	rgb.blue = constrain(b * 255.0f, 0, 255) + 0.5;
 }
 
-void KnxLed::kelvin2rgb(const uint16_t temperature, const uint8_t brightness, rgb_t &rgb)
+void KnxLed::kelvin2rgb(const uint16_t temperature, const uint8_t brightness, rgb_t &rgb) const
 {
 	float red;
 	float green;
