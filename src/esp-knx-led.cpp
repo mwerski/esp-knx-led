@@ -197,6 +197,8 @@ void KnxLed::setTemperature(uint16_t temperature)
 		_hsv.v = setpointBrightness;
 		setpointHsv = _hsv;
 	}
+
+	if (initialized) pwmControl();
 }
 
 // set RGB value. This will be converted to HSV internally
