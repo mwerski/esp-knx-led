@@ -735,7 +735,7 @@ void KnxLed::pwmControl()
 	case RGBCT:
 		rgb_t _rgb;
 		hsv2rgb(actHsv, _rgb);
-		#ifdef DEBUG
+		#ifdef DEBUGGING
 		Serial.printf("PWM IST: R=%3d,G=%3d,B=%3d H=%3d,S=%3d,V=%3d\n", _rgb.red, _rgb.green, _rgb.blue, actHsv.h, actHsv.s, actHsv.v);
 		#endif
 		ledAnalogWrite(0, lookupTable[_rgb.red]);
@@ -780,7 +780,7 @@ void KnxLed::pwmControl()
 
 void KnxLed::ledAnalogWrite(byte channel, uint16_t duty)
 {
-	#ifdef DEBUG
+	#ifdef DEBUGGING
 	Serial.print("Analog Write: "); Serial.print(channel); Serial.print(" / "); Serial.print("X"); Serial.print(" / "); Serial.println(duty);
 	#endif
 #if defined(ESP32)
@@ -961,7 +961,7 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 	if (initialized) return; // Schutz gegen Re-Init
 	// Channels für diese Instanz reservieren (instanzlokal in esp32LedCh[])
 	if (!allocateLedc(usedChannels, esp32LedCh)) {
-		#ifdef DEBUG
+		#ifdef DEBUGGING
 		Serial.println("LEDC allocation failed");
 		#endif
 		initialized = false;
@@ -975,7 +975,7 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 	}
 
 	initialized = true;
-	#ifdef DEBUG
+	#ifdef DEBUGGING
 	Serial.printf("LEDC channels: ");
 	for (uint8_t i=0;i<usedChannels;i++) Serial.printf("%d ", (int)esp32LedCh[i]);
 	Serial.println();
