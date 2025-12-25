@@ -265,7 +265,7 @@ void KnxLed::configMaxBrightness(uint8_t brightness)
 		maxBrightness = brightness;
 		defaultBrightness = brightness;
 		if (defaultHsv.v > 0) defaultHsv.v = brightness;
-	}	}
+	}
 }
 
 void KnxLed::configDefaultTemperature(uint16_t temperature)
