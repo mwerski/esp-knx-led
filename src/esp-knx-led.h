@@ -207,6 +207,8 @@ public:
     void sendStatusUpdate();
 
     bool getSwitchState();
+    uint8_t getMinBrightness();
+    uint8_t getMaxBrightness();
     uint8_t getBrightness();
     uint16_t getTemperature();
     rgb_t getRgb();

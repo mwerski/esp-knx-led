@@ -826,6 +826,16 @@ bool KnxLed::getSwitchState()
 	return setpointBrightness > 0;
 }
 
+uint8_t KnxLed::getMinBrightness()
+{
+	return minBrightness;
+}
+
+uint8_t KnxLed::getMaxBrightness()
+{
+	return maxBrightness;
+}
+
 uint8_t KnxLed::getBrightness()
 {
 	return max<uint8_t>(0, actBrightness);
