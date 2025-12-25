@@ -52,18 +52,18 @@ void KnxLed::switchLight(bool state)
 	{
 		if (state)
 		{
-			if (defaultBrightness >= MIN_BRIGHTNESS)
+			if (defaultBrightness >= minBrightness)
 			{
 				setBrightness(defaultBrightness);
 			}
 			// If default brightness is set to 0, the last brightness will be restored
-			else if (savedBrightness >= MIN_BRIGHTNESS)
+			else if (savedBrightness >= minBrightness)
 			{
 				setBrightness(savedBrightness);
 			}
 			else
 			{
-				setBrightness(MAX_BRIGHTNESS);
+				setBrightness(maxBrightness);
 			}
 
 			if (lightType == TUNABLEWHITE && defaultTemperature > 0)
@@ -88,7 +88,7 @@ void KnxLed::switchLight(bool state)
 		if (state)
 		{
 			hsv_t hsv;
-			if (defaultHsv.v >= MIN_BRIGHTNESS)
+			if (defaultHsv.v >= minBrightness)
 			{
 				hsv = defaultHsv;
 				setHsv(hsv);
@@ -96,26 +96,26 @@ void KnxLed::switchLight(bool state)
 			else if (defaultTemperature > 0)
 			{
 				setTemperature(defaultTemperature);
-				if (defaultBrightness >= MIN_BRIGHTNESS)
+				if (defaultBrightness >= minBrightness)
 				{
 					setBrightness(defaultBrightness);
 				}
 				// If default brightness is set to 0, the last brightness will be restored
-				else if (savedBrightness >= MIN_BRIGHTNESS)
+				else if (savedBrightness >= minBrightness)
 				{
 					setBrightness(savedBrightness);
 				}
 				else
 				{
-					setBrightness(MAX_BRIGHTNESS);
+					setBrightness(maxBrightness);
 				}
 			}
-			else if (defaultBrightness >= MIN_BRIGHTNESS)
+			else if (defaultBrightness >= minBrightness)
 			{
 				setBrightness(defaultBrightness);
 			}
 			// If default HSV brightness value is set to 0, the last HSV will be restored
-			else if (savedHsv.v >= MIN_BRIGHTNESS)
+			else if (savedHsv.v >= minBrightness)
 			{
 				hsv = savedHsv;
 				setHsv(hsv);
@@ -148,7 +148,7 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 {
 	if (brightness != setpointBrightness)
 	{
-		setpointBrightness = constrain(brightness, 0, MAX_BRIGHTNESS);
+		setpointBrightness = constrain(brightness, 0, maxBrightness);
 
 		if (setpointBrightness > 0 && saveValue) savedBrightness = setpointBrightness;
 
@@ -192,7 +192,7 @@ void KnxLed::setTemperature(uint16_t temperature)
 	{
 		rgb_t _rgb;
 		hsv_t _hsv;
-		kelvin2rgb(setpointTemperature, MAX_BRIGHTNESS, _rgb);
+		kelvin2rgb(setpointTemperature, maxBrightness, _rgb);
 		rgb2hsv(_rgb, _hsv);
 		_hsv.v = setpointBrightness;
 		setpointHsv = _hsv;
@@ -242,7 +242,7 @@ void KnxLed::setHsv(hsv_t hsv)
 
 void KnxLed::configDefaultBrightness(uint8_t brightness)
 {
-	if (brightness >= 0 && brightness <= MAX_BRIGHTNESS)
+	if (brightness >= 0 && brightness <= maxBrightness)
 	{
 		defaultBrightness = brightness;
 		if (defaultHsv.v > 0)
@@ -250,6 +250,22 @@ void KnxLed::configDefaultBrightness(uint8_t brightness)
 			defaultHsv.v = brightness;
 		}
 	}
+}
+
+void KnxLed::configMinBrightness(uint8_t brightness)
+{
+	if (brightness < maxBrightness) {
+		minBrightness = brightness;
+	}
+}
+
+void KnxLed::configMaxBrightness(uint8_t brightness)
+{
+	if (brightness > minBrightness) {
+		maxBrightness = brightness;
+		defaultBrightness = brightness;
+		if (defaultHsv.v > 0) defaultHsv.v = brightness;
+	}	}
 }
 
 void KnxLed::configDefaultTemperature(uint16_t temperature)
@@ -368,7 +384,7 @@ void KnxLed::relativeDimming()
 	if (relDimCount >= relDimInterval)
 	{
 		relDimCount = 0;
-		if (relDimCmd.dimMode == UP && actBrightness < MAX_BRIGHTNESS)
+		if (relDimCmd.dimMode == UP && actBrightness < maxBrightness)
 		{
 			setpointBrightness = actBrightness + 1;
 			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
@@ -376,7 +392,7 @@ void KnxLed::relativeDimming()
 				returnBrightness();
 			}
 		}
-		else if (relDimCmd.dimMode == DOWN && actBrightness > MIN_BRIGHTNESS)
+		else if (relDimCmd.dimMode == DOWN && actBrightness > minBrightness)
 		{
 			setpointBrightness = actBrightness - 1;
 			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
@@ -607,7 +623,7 @@ void KnxLed::pwmControl()
 				break;
 			}
 			// 2-Wire tunable LEDs. Different polarity for each channel controlled by 4quadrant H-Brige
-			float maxBt = ((float)actBrightness * 1023.0f) / ((float)MAX_BRIGHTNESS * (float)rangeTemperature);
+			float maxBt = ((float)actBrightness * 1023.0f) / ((float)maxBrightness * (float)rangeTemperature);
 
 			int dutyCh0 = (int)(clampf(((float)(actTemperature - minTemperature) * maxBt), 0.0f, 1023.0f) + 0.5f);
 			int dutyCh1 = (int)(clampf(((float)(maxTemperature - actTemperature) * maxBt), 0.0f, 1023.0f) + 0.5f);
@@ -689,7 +705,7 @@ void KnxLed::pwmControl()
 			}
 			else
 			{
-				kelvin2rgb(actTemperature, MAX_BRIGHTNESS, _rgb);
+				kelvin2rgb(actTemperature, maxBrightness, _rgb);
 				// If the equivalent is invalid, fall back to "pure white channel"
 				if (whiteRgbEquivalent.red == 0 || whiteRgbEquivalent.green == 0 || whiteRgbEquivalent.blue == 0)
 				{
