@@ -148,7 +148,14 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 {
 	if (brightness != setpointBrightness)
 	{
-		setpointBrightness = constrain(brightness, 0, maxBrightness);
+		// setpointBrightness = constrain(brightness, 0, maxBrightness);
+		if (brightness == 0) {
+				setpointBrightness = 0;
+		} else {
+				// 2) Clamp auf min..max
+				uint8_t clamped = constrain(brightness, minBrightness, maxBrightness);
+				setpointBrightness = clamped;
+		}
 
 		if (setpointBrightness > 0 && saveValue) savedBrightness = setpointBrightness;
 
