@@ -15,6 +15,18 @@
 #define MIN_BRIGHTNESS 12
 #define MAX_BRIGHTNESS 255
 
+
+#ifdef MIN_CYCLE_TIME
+#define KNXLED_TICKS_PER_DS ( (uint16_t)(100000u / (uint32_t)MIN_CYCLE_TIME) )
+#else
+#ifndef KNXLED_TICK_US
+#define KNXLED_TICK_US 5000u
+#endif
+#ifndef KNXLED_TICKS_PER_DS
+#define KNXLED_TICKS_PER_DS ( (uint16_t)(100000u / (uint32_t)KNXLED_TICK_US) )
+#endif
+#endif
+
 #define min_f(a, b, c) (fminf(a, fminf(b, c)))
 #define max_f(a, b, c) (fmaxf(a, fmaxf(b, c)))
 
@@ -185,6 +197,7 @@ public:
     void configDefaultHsv(hsv_t hsv);
     void configDimSpeed(uint8_t dimSetSpeed);
     void configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t fadeColorTime);
+		bool configDimCurve(const uint16_t* curve, size_t len);
 
     void registerStatusCallback(callbackBool *fctn);
     void registerBrightnessCallback(callbackUint8 *fctn);
@@ -241,14 +254,16 @@ private:
     unsigned int pwmFrequency = 1000;  // 1kHz
 #endif
     uint8_t cycleTime = 4; // in ms, loop cycle time, used for fading
-    uint8_t relDimInterval = 6;  // in seconds, speed for relative dimming commands
-    uint8_t fadeUpInterval = 2; // in seconds, speed for fading up
-    uint8_t fadeDownInterval = 2; // in seconds, speed for fading down
-    uint8_t fadeColorInterval = 2; // in seconds, speed for fading color
-    uint8_t relDimCount = 0;
-    uint8_t fadeUpCount = 0;
-    uint8_t fadeDownCount = 0;
-    uint8_t fadeColorCount = 0;
+    uint8_t relDimInterval = 60;  // in seconds/10, speed for relative dimming commands
+    uint8_t fadeUpInterval = 20; // in seconds/10, speed for fading up
+    uint8_t fadeDownInterval = 20; // in seconds/10, speed for fading down
+    uint8_t fadeColorInterval = 20; // in seconds/10, speed for fading color
+    uint16_t relDimCount = 0;
+    uint16_t fadeUpCount = 0;
+    uint16_t fadeDownCount = 0;
+    uint16_t fadeColorCount = 0;
+		bool absFadeWasActive = false;
+		bool colorFadeWasActive = false;
 
     uint8_t defaultBrightness = MAX_BRIGHTNESS;
     uint8_t minBrightness = MIN_BRIGHTNESS;
@@ -263,6 +278,9 @@ private:
     uint16_t rangeTemperature = maxTemperature - minTemperature;
     uint16_t setpointTemperature = defaultTemperature;
     uint16_t actTemperature = defaultTemperature;
+
+		const uint16_t* _dimCurve = lookupTable; // Default Dimmkurve
+		uint16_t _dimCurveBuf[256];              // Copy-Buffer fuer alternative Dimmkurve
 
     hsv_t defaultHsv;
     hsv_t savedHsv;

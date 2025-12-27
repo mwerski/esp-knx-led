@@ -1,4 +1,5 @@
 #include "esp-knx-led.h"
+
 #if defined(ESP32)
 uint8_t KnxLed::nextLedcChannel = 0;
 
@@ -12,6 +13,8 @@ bool KnxLed::allocateLedc(uint8_t count, ledc_channel_t* out) {
 	return true;
 }
 #endif
+
+static constexpr uint8_t TICKS_PER_DS = 20; // 100ms / 5ms
 
 void KnxLed::computeStatusColors(hsv_t &hsv, rgb_t &rgb) const
 {
@@ -327,6 +330,21 @@ void KnxLed::configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t f
 	fadeColorInterval = fadeColorTime;
 }
 
+bool KnxLed::configDimCurve(const uint16_t* curve, size_t len) {
+  if (!curve || len != 256) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 256; i++) {
+    uint16_t v = curve[i];
+    if (v > 1023) v = 1023;
+    _dimCurveBuf[i] = v;
+  }
+
+  _dimCurve = _dimCurveBuf;
+  return true;
+}
+
 void KnxLed::setRelDimCmd(dpt3_t dimCmd)
 {
 	relDimCmd = dimCmd;
@@ -387,126 +405,236 @@ void KnxLed::loop()
 
 void KnxLed::relativeDimming()
 {
-	relDimCount++;
-	if (relDimCount >= relDimInterval)
-	{
-		relDimCount = 0;
-		if (relDimCmd.dimMode == UP && actBrightness < maxBrightness)
-		{
-			setpointBrightness = actBrightness + 1;
-			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnBrightness();
-			}
-		}
-		else if (relDimCmd.dimMode == DOWN && actBrightness > minBrightness)
-		{
-			setpointBrightness = actBrightness - 1;
-			if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnBrightness();
-			}
-		}
-		else if (relDimCmd.dimMode == STOP)
-		{
-			savedBrightness = setpointBrightness; // = actBrightness;
-			returnBrightness();
-			relDimCmd.dimMode = IDLE;
-		}
+	// Nur arbeiten, wenn irgendein relatives Kommando aktiv ist
+	const bool relCmdActive =
+		relDimCmd.dimMode != IDLE ||
+		relTemperatureCmd.dimMode != IDLE ||
+		relHueCmd.dimMode != IDLE ||
+		relSaturationCmd.dimMode != IDLE;
 
-		if (relTemperatureCmd.dimMode == UP && actTemperature < maxTemperature)
+	if (!relCmdActive) {
+		relDimCount = 0; // optional: sauberer Reset
+		return;
+	}
+
+	// ETS liefert ds (Zehntelsekunden) = Zeit für 0..100% (Vollbereich)
+	// Tick-Basis: ticksPerStep = (totalTicks / fullSteps)
+	const uint32_t totalTicks = (uint32_t)relDimInterval * (uint32_t)KNXLED_TICKS_PER_DS;
+
+	// Vollbereich in Steps für Helligkeit: (max - min), mindestens 1
+	uint16_t fullSteps = (uint16_t)((maxBrightness > minBrightness) ? (maxBrightness - minBrightness) : 1u);
+
+	uint32_t ticksPerStep = (totalTicks == 0) ? 0u : (totalTicks / (uint32_t)fullSteps);
+	if (ticksPerStep == 0 && totalTicks != 0) ticksPerStep = 1u;
+
+	// Tick zaehlen
+	relDimCount++;
+	if (ticksPerStep != 0) {
+		if (relDimCount < ticksPerStep) return;
+		relDimCount = 0;
+	} else {
+		// ticksPerStep == 0 => sofort (max. Geschwindigkeit)
+		relDimCount = 0;
+	}
+
+	// --- Brightness (relativ) ---
+	if (relDimCmd.dimMode == UP && actBrightness < maxBrightness)
+	{
+		setpointBrightness = actBrightness + 1;
+		if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
 		{
-			setpointTemperature = min<uint16_t>(actTemperature + 20, maxTemperature);
-			if (setpointTemperature % 300 == 0)
-			{
-				returnTemperature();
-			}
+			returnBrightness();
 		}
-		else if (relTemperatureCmd.dimMode == DOWN && actTemperature > minTemperature)
+	}
+	else if (relDimCmd.dimMode == DOWN && actBrightness > minBrightness)
+	{
+		setpointBrightness = actBrightness - 1;
+		if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
 		{
-			setpointTemperature = max<uint16_t>(actTemperature - 20, minTemperature);
-			if (setpointTemperature % 300 == 0)
-			{
-				returnTemperature();
-			}
+			returnBrightness();
 		}
-		else if (relTemperatureCmd.dimMode == STOP)
+	}
+	else if (relDimCmd.dimMode == STOP)
+	{
+		savedBrightness = setpointBrightness;
+		returnBrightness();
+		relDimCmd.dimMode = IDLE;
+	}
+
+	// --- Temperatur (relativ) ---
+	if (relTemperatureCmd.dimMode == UP && actTemperature < maxTemperature)
+	{
+		setpointTemperature = min<uint16_t>(actTemperature + 20, maxTemperature);
+		if (setpointTemperature % 300 == 0)
 		{
 			returnTemperature();
-			relTemperatureCmd.dimMode = IDLE;
 		}
+	}
+	else if (relTemperatureCmd.dimMode == DOWN && actTemperature > minTemperature)
+	{
+		setpointTemperature = max<uint16_t>(actTemperature - 20, minTemperature);
+		if (setpointTemperature % 300 == 0)
+		{
+			returnTemperature();
+		}
+	}
+	else if (relTemperatureCmd.dimMode == STOP)
+	{
+		returnTemperature();
+		relTemperatureCmd.dimMode = IDLE;
+	}
 
-		if (relHueCmd.dimMode == UP)
+	// --- Hue (relativ) ---
+	if (relHueCmd.dimMode == UP)
+	{
+		setpointHsv.h = actHsv.h + 1;
+		if ((int)(setpointHsv.h / 2.55 * 2 + 0.7) % 20 == 0)
 		{
-			setpointHsv.h = actHsv.h + 1;
-			if ((int)(setpointHsv.h / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnColors();
-			}
-		}
-		else if (relHueCmd.dimMode == DOWN)
-		{
-			setpointHsv.h = actHsv.h - 1;
-			if ((int)(setpointHsv.h / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnColors();
-			}
-		}
-		else if (relHueCmd.dimMode == STOP)
-		{
-			savedHsv.h = setpointHsv.h;
 			returnColors();
-			relHueCmd.dimMode = IDLE;
 		}
+	}
+	else if (relHueCmd.dimMode == DOWN)
+	{
+		setpointHsv.h = actHsv.h - 1;
+		if ((int)(setpointHsv.h / 2.55 * 2 + 0.7) % 20 == 0)
+		{
+			returnColors();
+		}
+	}
+	else if (relHueCmd.dimMode == STOP)
+	{
+		savedHsv.h = setpointHsv.h;
+		returnColors();
+		relHueCmd.dimMode = IDLE;
+	}
 
-		if (relSaturationCmd.dimMode == UP && actHsv.s < 255)
+	// --- Saturation (relativ) ---
+	if (relSaturationCmd.dimMode == UP && actHsv.s < 255)
+	{
+		setpointHsv.s = actHsv.s + 1;
+		if ((int)(setpointHsv.s / 2.55 * 2 + 0.7) % 20 == 0)
 		{
-			setpointHsv.s = actHsv.s + 1;
-			if ((int)(setpointHsv.s / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnColors();
-			}
-		}
-		else if (relSaturationCmd.dimMode == DOWN && actHsv.s > 0)
-		{
-			setpointHsv.s = actHsv.s - 1;
-			if ((int)(setpointHsv.s / 2.55 * 2 + 0.7) % 20 == 0)
-			{
-				returnColors();
-			}
-		}
-		else if (relSaturationCmd.dimMode == STOP)
-		{
-			savedHsv.s = setpointHsv.s;
 			returnColors();
-			relSaturationCmd.dimMode = IDLE;
 		}
+	}
+	else if (relSaturationCmd.dimMode == DOWN && actHsv.s > 0)
+	{
+		setpointHsv.s = actHsv.s - 1;
+		if ((int)(setpointHsv.s / 2.55 * 2 + 0.7) % 20 == 0)
+		{
+			returnColors();
+		}
+	}
+	else if (relSaturationCmd.dimMode == STOP)
+	{
+		savedHsv.s = setpointHsv.s;
+		returnColors();
+		relSaturationCmd.dimMode = IDLE;
 	}
 }
 
 void KnxLed::fade()
-{	
-	// Fade immediately if any relative command is active
-	bool relCmdActive = relDimCmd.dimMode != IDLE || relTemperatureCmd.dimMode != IDLE || relHueCmd.dimMode != IDLE || relSaturationCmd.dimMode != IDLE;
+{
+	// Active-Flags
+	const bool absFadeActive =
+		(setpointBrightness != actBrightness) ||
+		(setpointBrightness != actHsv.v);
 
-	// Increment counters and check if fade should occur
-	bool relFadeUp = (++fadeUpCount >= fadeUpInterval) || relCmdActive;
-	bool relFadeDown = (++fadeDownCount >= fadeDownInterval) || relCmdActive;
-	bool relFadeColor = (++fadeColorCount >= fadeColorInterval) || relCmdActive;
-	if (relFadeUp) fadeUpCount = 0;
-	if (relFadeDown) fadeDownCount = 0;
-	if (relFadeColor) fadeColorCount = 0;
+	const bool relCmdActive =
+		relDimCmd.dimMode != IDLE ||
+		relTemperatureCmd.dimMode != IDLE ||
+		relHueCmd.dimMode != IDLE ||
+		relSaturationCmd.dimMode != IDLE;
 
-	bool updatePwm = false;		
+	const bool colorFadeActive =
+		(setpointTemperature != actTemperature) ||
+		(setpointHsv.h != actHsv.h) ||
+		(setpointHsv.s != actHsv.s);
+
+	// ETS liefert ds (Zehntelsekunden) = Zeit für 0..100% (Vollbereich)
+	const uint32_t upTotalTicks    = (uint32_t)fadeUpInterval    * (uint32_t)KNXLED_TICKS_PER_DS;
+	const uint32_t downTotalTicks  = (uint32_t)fadeDownInterval  * (uint32_t)KNXLED_TICKS_PER_DS;
+	const uint32_t colorTotalTicks = (uint32_t)fadeColorInterval * (uint32_t)KNXLED_TICKS_PER_DS;
+
+	// Brightness-Vollbereich: (max - min), mindestens 1
+	const uint16_t brightFullSteps =
+		(uint16_t)((maxBrightness > minBrightness) ? (maxBrightness - minBrightness) : 1u);
+
+	// Color-Vollbereiche:
+	// Hue/Sat: 0..255 (255 Schritte sinnvoll), Temperatur: range/20K
+	const uint16_t hueSatFullSteps = 255u;
+	const uint16_t tempFullSteps =
+		(uint16_t)((rangeTemperature == 0) ? 1u : max<uint32_t>(1u, (uint32_t)rangeTemperature / 20u));
+
+	const uint16_t colorFullSteps = (tempFullSteps > hueSatFullSteps) ? tempFullSteps : hueSatFullSteps;
+
+	// ticks pro Step (mind. 1 wenn Total>0)
+	uint16_t upStepTicks   = (upTotalTicks == 0)   ? 0u : (uint16_t)max<uint32_t>(1u, upTotalTicks / (uint32_t)brightFullSteps);
+	uint16_t downStepTicks = (downTotalTicks == 0) ? 0u : (uint16_t)max<uint32_t>(1u, downTotalTicks / (uint32_t)brightFullSteps);
+	uint16_t colorStepTicks= (colorTotalTicks == 0)? 0u : (uint16_t)max<uint32_t>(1u, colorTotalTicks / (uint32_t)colorFullSteps);
+
+	// "Erster Step sofort" (ohne Zeitstempel): Counter direkt auf Schwelle setzen
+	if (absFadeActive && !absFadeWasActive) {
+		if (upStepTicks   != 0) fadeUpCount   = upStepTicks;
+		if (downStepTicks != 0) fadeDownCount = downStepTicks;
+	}
+	absFadeWasActive = absFadeActive;
+
+	if (colorFadeActive && !colorFadeWasActive) {
+		if (colorStepTicks != 0) fadeColorCount = colorStepTicks;
+	}
+	colorFadeWasActive = colorFadeActive;
+
+	// Tick zählen + prüfen
+	bool doUp = false;
+	bool doDown = false;
+	bool doColor = false;
+
+	// UP
+	if (relCmdActive || upStepTicks == 0) {
+		doUp = true;
+	} else {
+		fadeUpCount++;
+		if (fadeUpCount >= upStepTicks) {
+			fadeUpCount = 0;
+			doUp = true;
+		}
+	}
+
+	// DOWN
+	if (relCmdActive || downStepTicks == 0) {
+		doDown = true;
+	} else {
+		fadeDownCount++;
+		if (fadeDownCount >= downStepTicks) {
+			fadeDownCount = 0;
+			doDown = true;
+		}
+	}
+
+	// COLOR
+	if (relCmdActive || colorStepTicks == 0) {
+		doColor = true;
+	} else {
+		fadeColorCount++;
+		if (fadeColorCount >= colorStepTicks) {
+			fadeColorCount = 0;
+			doColor = true;
+		}
+	}
+
+	bool updatePwm = false;
+
+	// --- Brightness/actBrightness ---
 	if (setpointBrightness != actBrightness)
 	{
 		int oldBrightness = actBrightness;
-		if (setpointBrightness > actBrightness && relFadeUp)
+		if (setpointBrightness > actBrightness && doUp)
 		{
 			actBrightness++;
 			updatePwm = true;
 		}
-		else if (setpointBrightness < actBrightness && relFadeDown)
+		else if (setpointBrightness < actBrightness && doDown)
 		{
 			actBrightness--;
 			updatePwm = true;
@@ -518,9 +646,10 @@ void KnxLed::fade()
 		}
 	}
 
+	// --- HSV.V (Brightness im RGB-Modus) ---
 	if (currentLightMode == MODE_CCT && (lightType == RGBCT || lightType == RGBW))
 	{
-		if (actHsv.v > 0 && relFadeDown)
+		if (actHsv.v > 0 && doDown)
 		{
 			actHsv.v--;
 			updatePwm = true;
@@ -530,12 +659,12 @@ void KnxLed::fade()
 	{
 		if (setpointBrightness != actHsv.v)
 		{
-			if (setpointBrightness > actHsv.v && relFadeUp)
+			if (setpointBrightness > actHsv.v && doUp)
 			{
 				actHsv.v++;
 				updatePwm = true;
 			}
-			else if (setpointBrightness < actHsv.v && relFadeDown)
+			else if (setpointBrightness < actHsv.v && doDown)
 			{
 				actHsv.v--;
 				updatePwm = true;
@@ -543,7 +672,8 @@ void KnxLed::fade()
 		}
 	}
 
-	if(relFadeColor)
+	// --- Color-Fade: Temperatur + Hue + Saturation ---
+	if (doColor)
 	{
 		if (setpointTemperature > actTemperature)
 		{
@@ -583,7 +713,6 @@ void KnxLed::fade()
 		}
 	}
 
-	// to avoid flickering, only update on change
 	if (updatePwm)
 	{
 		pwmControl();
@@ -616,7 +745,7 @@ void KnxLed::pwmControl()
 	case DIMMABLE:
 	{
 		const uint8_t dutyCh0 = actBrightness;
-		ledAnalogWrite(0, lookupTable[dutyCh0]);
+		ledAnalogWrite(0, _dimCurve[dutyCh0]);
 		break;
 	}
 	case TUNABLEWHITE:
@@ -641,8 +770,8 @@ void KnxLed::pwmControl()
 			ledc_update_duty(LEDC_HIGH_SPEED_MODE, esp32LedCh[1]);
 #else
 			// TODO
-			ledAnalogWrite(0, lookupTable[(uint8_t)constrain(dutyCh0 / 4, 0, 255)]);
-			ledAnalogWrite(1, lookupTable[(uint8_t)constrain(dutyCh1 / 4, 0, 255)]);
+			ledAnalogWrite(0, _dimCurve[(uint8_t)constrain(dutyCh0 / 4, 0, 255)]);
+			ledAnalogWrite(1, _dimCurve[(uint8_t)constrain(dutyCh1 / 4, 0, 255)]);
 #endif
 		}
 		else
@@ -665,8 +794,8 @@ void KnxLed::pwmControl()
 					uint8_t v0 = (uint8_t)(clampf(f0, 0.0f, 1.0f) * (float)actBrightness + 0.5f);
 					uint8_t v1 = (uint8_t)(clampf(f1, 0.0f, 1.0f) * (float)actBrightness + 0.5f);
 
-					dutyCh0 = lookupTable[v0];
-					dutyCh1 = lookupTable[v1];
+					dutyCh0 = _dimCurve[v0];
+					dutyCh1 = _dimCurve[v1];
 				}
 
 			}
@@ -693,9 +822,9 @@ void KnxLed::pwmControl()
 		rgb_t _rgb;
 		hsv2rgb(actHsv, _rgb);
 
-		ledAnalogWrite(0, lookupTable[_rgb.red]);
-		ledAnalogWrite(1, lookupTable[_rgb.green]);
-		ledAnalogWrite(2, lookupTable[_rgb.blue]);
+		ledAnalogWrite(0, _dimCurve[_rgb.red]);
+		ledAnalogWrite(1, _dimCurve[_rgb.green]);
+		ledAnalogWrite(2, _dimCurve[_rgb.blue]);
 		break;
 	}
 	case RGBW:
@@ -749,10 +878,10 @@ void KnxLed::pwmControl()
 			}
 		}
 
-		ledAnalogWrite(0, lookupTable[_rgb.red]);
-		ledAnalogWrite(1, lookupTable[_rgb.green]);
-		ledAnalogWrite(2, lookupTable[_rgb.blue]);
-		ledAnalogWrite(3, lookupTable[white]);
+		ledAnalogWrite(0, _dimCurve[_rgb.red]);
+		ledAnalogWrite(1, _dimCurve[_rgb.green]);
+		ledAnalogWrite(2, _dimCurve[_rgb.blue]);
+		ledAnalogWrite(3, _dimCurve[white]);
 		break;
 	}
 	case RGBCT:
@@ -761,9 +890,9 @@ void KnxLed::pwmControl()
 		#ifdef DEBUGGING
 		Serial.printf("PWM IST: R=%3d,G=%3d,B=%3d H=%3d,S=%3d,V=%3d\n", _rgb.red, _rgb.green, _rgb.blue, actHsv.h, actHsv.s, actHsv.v);
 		#endif
-		ledAnalogWrite(0, lookupTable[_rgb.red]);
-		ledAnalogWrite(1, lookupTable[_rgb.green]);
-		ledAnalogWrite(2, lookupTable[_rgb.blue]);
+		ledAnalogWrite(0, _dimCurve[_rgb.red]);
+		ledAnalogWrite(1, _dimCurve[_rgb.green]);
+		ledAnalogWrite(2, _dimCurve[_rgb.blue]);
 		uint16_t dutyCh3 = 0;
 		uint16_t dutyCh4 = 0;
 
@@ -781,8 +910,8 @@ void KnxLed::pwmControl()
 				float f4 = (2.0f * (float)(maxTemperature - actTemperature)) / (float)rangeTemperature;
 				uint8_t v3 = (uint8_t)(clampf(f3, 0.0f, 1.0f) * extra + 0.5f);
 				uint8_t v4 = (uint8_t)(clampf(f4, 0.0f, 1.0f) * extra + 0.5f);
-				dutyCh3 = lookupTable[v3];
-				dutyCh4 = lookupTable[v4];
+				dutyCh3 = _dimCurve[v3];
+				dutyCh4 = _dimCurve[v4];
 			}
 		}
 		else if (actBrightness > actHsv.v)
