@@ -156,6 +156,16 @@ typedef struct __rgb
     }
 } rgb_t;
 
+// compact light state, e.g. to restore a light after a restart
+typedef struct __knxLedState
+{
+    uint8_t brightness = 0;   // 0 = off
+    uint8_t cctMode = 1;      // 1 = colour temperature, 0 = colour (hue/saturation)
+    uint16_t temperature = 0; // kelvin
+    uint8_t hue = 0;
+    uint8_t saturation = 0;
+} knxLedState_t;
+
 typedef void callbackBool(bool);
 typedef void callbackUint8(uint8_t);
 typedef void callbackUint16(uint16_t);
@@ -198,6 +208,8 @@ public:
     void configDimSpeed(uint8_t dimSetSpeed);
     void configFadeSpeed(uint8_t fadeUpTime, uint8_t fadeDownTime, uint8_t fadeColorTime);
 		bool configDimCurve(const uint16_t* curve, size_t len);
+		void configPwmFrequency(unsigned int frequency); // must be called before init...Light()
+		void configDim2Warm(bool enable); // tunable white: colour temperature follows brightness (warm when dimmed down)
 
     void registerStatusCallback(callbackBool *fctn);
     void registerBrightnessCallback(callbackUint8 *fctn);
@@ -226,6 +238,8 @@ public:
     uint16_t getTemperature();
     rgb_t getRgb();
     hsv_t getHsv();
+    knxLedState_t getState();
+    void restoreState(const knxLedState_t &state);
     void rgb2hsv(const rgb_t rgb, hsv_t &hsv) const;
     void hsv2rgb(const hsv_t hsv, rgb_t &rgb) const;
     void kelvin2rgb(const uint16_t temperature, const uint8_t brightness, rgb_t &rgb) const;
@@ -263,6 +277,10 @@ private:
     uint16_t fadeDownCount = 0;
     uint16_t fadeColorCount = 0;
 		bool absFadeWasActive = false;
+		bool dim2warm = false;          // colour temperature follows brightness
+		bool dim2warmOverride = false;  // explicit colour temperature command, until next switch on
+		bool dim2warmActive() const;
+		uint16_t dim2warmTemperature(uint8_t brightness) const;
 		bool colorFadeWasActive = false;
 
     uint8_t defaultBrightness = MAX_BRIGHTNESS;

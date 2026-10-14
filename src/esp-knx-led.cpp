@@ -69,10 +69,12 @@ void KnxLed::switchLight(bool state)
 				setBrightness(maxBrightness);
 			}
 
-			if (lightType == TUNABLEWHITE && defaultTemperature > 0)
+			if (lightType == TUNABLEWHITE && defaultTemperature > 0 && !dim2warm)
 			{
 				setTemperature(defaultTemperature);
 			}
+			// switching on re-enables dim to warm after an explicit colour temperature command
+			dim2warmOverride = false;
 		}
 		else
 		{
@@ -151,6 +153,8 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 {
 	if (brightness != setpointBrightness)
 	{
+		// switching on re-enables dim to warm after an explicit colour temperature command
+		if (setpointBrightness == 0 && brightness > 0) dim2warmOverride = false;
 		// setpointBrightness = constrain(brightness, 0, maxBrightness);
 		if (brightness == 0) {
 				setpointBrightness = 0;
@@ -174,6 +178,8 @@ void KnxLed::setBrightness(uint8_t brightness, bool saveValue)
 
 void KnxLed::setTemperature(uint16_t temperature)
 {
+	// explicit colour temperature ends dim to warm until the light is switched on again
+	dim2warmOverride = true;
 	setpointTemperature = constrain(temperature, minTemperature, maxTemperature);
 	// Statusausgabe: Temperatur wurde gesetzt
 	returnTemperature();
@@ -345,6 +351,39 @@ bool KnxLed::configDimCurve(const uint16_t* curve, size_t len) {
   return true;
 }
 
+void KnxLed::configDim2Warm(bool enable)
+{
+	dim2warm = enable;
+	dim2warmOverride = false;
+}
+
+bool KnxLed::dim2warmActive() const
+{
+	return dim2warm && !dim2warmOverride && lightType == TUNABLEWHITE;
+}
+
+uint16_t KnxLed::dim2warmTemperature(uint8_t brightness) const
+{
+	// minBrightness -> minTemperature (warm), maxBrightness -> maxTemperature (cold)
+	// interpolated in mired, which is perceptually more even than kelvin
+	if (maxBrightness <= minBrightness || minTemperature == 0 || maxTemperature <= minTemperature)
+		return maxTemperature;
+	float f = ((float)brightness - (float)minBrightness) / (float)(maxBrightness - minBrightness);
+	f = constrain(f, 0.0f, 1.0f);
+	const float miredWarm = 1000000.0f / (float)minTemperature;
+	const float miredCold = 1000000.0f / (float)maxTemperature;
+	const float mired = miredWarm + f * (miredCold - miredWarm);
+	return (uint16_t)constrain((int)(1000000.0f / mired + 0.5f), (int)minTemperature, (int)maxTemperature);
+}
+
+void KnxLed::configPwmFrequency(unsigned int frequency)
+{
+	// 0 keeps the platform default, frequency is applied in initOutputChannels()
+	if (frequency > 0) {
+		pwmFrequency = frequency;
+	}
+}
+
 void KnxLed::setRelDimCmd(dpt3_t dimCmd)
 {
 	relDimCmd = dimCmd;
@@ -440,6 +479,7 @@ void KnxLed::relativeDimming()
 	// --- Brightness (relativ) ---
 	if (relDimCmd.dimMode == UP && actBrightness < maxBrightness)
 	{
+		if (actBrightness == 0) dim2warmOverride = false; // switching on by dimming up
 		setpointBrightness = actBrightness + 1;
 		if ((int)(setpointBrightness / 2.55 * 2 + 0.7) % 20 == 0)
 		{
@@ -644,6 +684,15 @@ void KnxLed::fade()
 		{
 			returnStatus();
 		}
+	}
+
+	// --- Dim to warm: colour temperature follows the actual brightness ---
+	// set setpoint and actual value, so the colour fade below does not lag behind
+	if (updatePwm && dim2warmActive())
+	{
+		const uint16_t t = dim2warmTemperature(actBrightness);
+		setpointTemperature = t;
+		actTemperature = t;
 	}
 
 	// --- HSV.V (Brightness im RGB-Modus) ---
@@ -987,6 +1036,51 @@ hsv_t KnxLed::getHsv()
 	return actHsv;
 }
 
+knxLedState_t KnxLed::getState()
+{
+	knxLedState_t state;
+	state.brightness = setpointBrightness;
+	state.cctMode = currentLightMode == MODE_CCT ? 1 : 0;
+	state.temperature = setpointTemperature;
+	state.hue = setpointHsv.h;
+	state.saturation = setpointHsv.s;
+	return state;
+}
+
+void KnxLed::restoreState(const knxLedState_t &state)
+{
+	if (!initialized || state.brightness == 0) return;
+
+	switch (lightType)
+	{
+	case TUNABLEWHITE:
+		// with dim to warm the colour temperature follows the brightness
+		if (!dim2warm && state.temperature > 0) setTemperature(state.temperature);
+		setBrightness(state.brightness);
+		break;
+
+	case RGB:
+	case RGBW:
+	case RGBCT:
+		// brightness first, setTemperature() derives the RGB colour from it
+		setBrightness(state.brightness);
+		if (state.cctMode && state.temperature > 0)
+		{
+			setTemperature(state.temperature);
+		}
+		else
+		{
+			hsv_t hsv = {state.hue, state.saturation, state.brightness};
+			setHsv(hsv);
+		}
+		break;
+
+	default:
+		setBrightness(state.brightness);
+		break;
+	}
+}
+
 void KnxLed::returnStatus()
 {
 	if (returnStatusFctn != nullptr)
@@ -1000,6 +1094,11 @@ void KnxLed::returnBrightness()
 	if (returnBrightnessFctn != nullptr)
 	{
 		returnBrightnessFctn(setpointBrightness);
+	}
+	// dim to warm: report the colour temperature belonging to the target brightness
+	if (dim2warmActive() && setpointBrightness > 0 && returnTemperatureFctn != nullptr)
+	{
+		returnTemperatureFctn(dim2warmTemperature(setpointBrightness));
 	}
 }
 
@@ -1134,6 +1233,9 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 	for (uint8_t i = 0; i < usedChannels; i++) {
 		ledcSetup(esp32LedCh[i], pwmFrequency, pwmResolution);
 		ledcAttachPin(outputPins[i], esp32LedCh[i]);
+		// ledcAttachPin() keeps the duty from the LEDC registers, which survive a software restart
+		// (OTA, ETS, ESP.restart()), so a light that was on would stay on while the state says off
+		ledcWrite(esp32LedCh[i], 0);
 	}
 
 	initialized = true;
@@ -1153,6 +1255,11 @@ void KnxLed::initOutputChannels(uint8_t usedChannels)
 	#else
 		analogWriteFrequency(pwmFrequency);
 	#endif
+	// start with all outputs off, matching the initial state
+	for (uint8_t i = 0; i < usedChannels; i++)
+	{
+		analogWrite(outputPins[i], 0);
+	}
 	initialized = true;
 #endif
 }
